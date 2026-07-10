@@ -24,6 +24,15 @@
   - Keep-alive ping cada 4 min
   - PWA instalable + botón Actualizar
   GAS: GAS_v1.gs
+
+  v1.2 — 2026-07-10
+  - Dashboard: para elementos de gasto (FlagMedicion=false), la card "Historial"
+    ahora muestra gráfico combo mensual (barras = gasto del mes, línea = acumulado
+    corriente) usando el nuevo campo historialMensual del backend v1.3.
+  - Elementos de medición (FlagMedicion=true) no cambian: siguen con el gráfico
+    de línea de los últimos 3 registros.
+  - Card "Costo" → labels explícitos "Acumulado total" y "Último monto".
+  GAS: GAS_v1.3.gs
 -->
 <link rel="icon" href="icon-192.png">
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;1,9..40,400&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -935,7 +944,7 @@ input, select, textarea { font-family: inherit; }
 /* ── Configuración ───────────────────────────────────────── */
 const GAS_URL    = 'https://script.google.com/macros/s/AKfycbzRcQECvOb9-BkJTXhsW8MGhd3ltliDDJIrQ6Bt7KtTmJII8AeR6xt6Ygy7nMZgJM_E3g/exec';  // ← pegá la URL del deployment GAS
 const CLIENT_ID  = '174536806740-aus6npjphhdcn5nkgtt1ejl0tcj16ou7.apps.googleusercontent.com'; // ← OAuth Client ID de GCP
-const VERSION_UI = 'v1.1';
+const VERSION_UI = 'v1.2';
 
 /* ── Estado global ───────────────────────────────────────── */
 const estado = {
@@ -1370,6 +1379,84 @@ function generarGraficoSVG(registros, elem) {
   </svg>`;
 }
 
+function fmtMes(mesStr) {
+  // mesStr: 'YYYY-MM'
+  if (!mesStr) return '—';
+  const MESES = ['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
+  const [y, m] = mesStr.split('-');
+  return MESES[parseInt(m, 10) - 1] + " '" + y.slice(2);
+}
+
+/* Gráfico combo: barras (gasto del mes) + línea (acumulado corriente).
+   Usa dos escalas independientes (el acumulado siempre crece más que
+   el gasto mensual individual), compartiendo el mismo eje X. */
+function generarGraficoMensualSVG(historialMensual) {
+  const W = 340, H = 130, PAD = { t:14, r:44, b:28, l:44 };
+  const gW = W - PAD.l - PAD.r;
+  const gH = H - PAD.t - PAD.b;
+
+  const n = historialMensual.length;
+  const totales    = historialMensual.map(m => m.total);
+  const acumulados = historialMensual.map(m => m.acumulado);
+
+  const maxTotal = Math.max(...totales) || 1;
+  const maxAcum  = Math.max(...acumulados) || 1;
+
+  const anchoBarra = Math.min(28, gW / n * 0.55);
+  const px  = (i) => PAD.l + (i + 0.5) / n * gW;
+  const pyB = (v)  => PAD.t + gH - (v / maxTotal) * gH;       // escala barras (izq)
+  const pyL = (v)  => PAD.t + gH - (v / maxAcum)  * gH;       // escala línea (der)
+
+  // Barras
+  const barras = historialMensual.map((m, i) => {
+    const x = px(i) - anchoBarra / 2;
+    const yTop = pyB(m.total);
+    const alto = PAD.t + gH - yTop;
+    return `<rect x="${x.toFixed(1)}" y="${yTop.toFixed(1)}" width="${anchoBarra.toFixed(1)}" height="${alto.toFixed(1)}" rx="2" fill="#0ea5e9" fill-opacity="0.55"/>`;
+  }).join('');
+
+  // Línea de acumulado
+  const puntosLinea = historialMensual.map((m, i) => ({ x: px(i), y: pyL(m.acumulado) }));
+  const lineaD = puntosLinea.map((p, i) => `${i===0?'M':'L'}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ');
+  const circulosLinea = puntosLinea.map(p =>
+    `<circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="3" fill="#d97706" stroke="#fff" stroke-width="1.2"/>`
+  ).join('');
+
+  // Etiquetas eje X (mes)
+  const etiqX = historialMensual.map((m, i) =>
+    `<text x="${px(i).toFixed(1)}" y="${(H-6).toFixed(1)}" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="9" fill="#94a3b8">${fmtMes(m.mes)}</text>`
+  ).join('');
+
+  // Etiquetas eje Y izq (barras, $ del mes) y der (acumulado)
+  const etiqY = `
+    <text x="${(PAD.l-4).toFixed(1)}" y="${(PAD.t+gH).toFixed(1)}" text-anchor="end" font-family="DM Mono,monospace" font-size="8" fill="#0284c7">0</text>
+    <text x="${(PAD.l-4).toFixed(1)}" y="${(PAD.t+4).toFixed(1)}" text-anchor="end" font-family="DM Mono,monospace" font-size="8" fill="#0284c7">${fmtNum(maxTotal)}</text>
+    <text x="${(PAD.l+gW+4).toFixed(1)}" y="${(PAD.t+gH).toFixed(1)}" text-anchor="start" font-family="DM Mono,monospace" font-size="8" fill="#d97706">0</text>
+    <text x="${(PAD.l+gW+4).toFixed(1)}" y="${(PAD.t+4).toFixed(1)}" text-anchor="start" font-family="DM Mono,monospace" font-size="8" fill="#d97706">${fmtNum(maxAcum)}</text>`;
+
+  // Leyenda
+  const leyenda = `
+    <rect x="${PAD.l}" y="2" width="8" height="8" rx="2" fill="#0ea5e9" fill-opacity="0.55"/>
+    <text x="${PAD.l+11}" y="9.5" font-family="DM Sans,sans-serif" font-size="8" fill="#64748b">Gasto del mes</text>
+    <circle cx="${PAD.l+95}" cy="6" r="3" fill="#d97706"/>
+    <text x="${PAD.l+102}" y="9.5" font-family="DM Sans,sans-serif" font-size="8" fill="#64748b">Acumulado</text>`;
+
+  return `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" style="overflow:visible">
+    <!-- Grilla -->
+    <line x1="${PAD.l}" y1="${PAD.t}" x2="${PAD.l}" y2="${PAD.t+gH}" stroke="#e2e8f0" stroke-width="0.5"/>
+    <line x1="${PAD.l}" y1="${PAD.t+gH}" x2="${PAD.l+gW}" y2="${PAD.t+gH}" stroke="#e2e8f0" stroke-width="0.5"/>
+    <!-- Barras -->
+    ${barras}
+    <!-- Línea acumulado -->
+    <path d="${lineaD}" fill="none" stroke="#d97706" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    ${circulosLinea}
+    <!-- Ejes / leyenda -->
+    ${etiqX}
+    ${etiqY}
+    ${leyenda}
+  </svg>`;
+}
+
 /* ══════════════════════════════════════════════
    DASHBOARD
 ══════════════════════════════════════════════ */
@@ -1503,6 +1590,9 @@ function renderDashboard(d, elemID) {
     return;
   }
 
+  const esGasto = !elem.FlagMedicion;
+  const ultimoMonto = d.ultimoRegistro && d.ultimoRegistro.valor ? d.ultimoRegistro.valor : null;
+
   const cards = [
     {
       icon : '📅', colorClass: 'blue',
@@ -1523,7 +1613,15 @@ function renderDashboard(d, elemID) {
         { lbl: 'Total de registros',       val: d.totalRegistros },
       ]
     },
-    {
+    esGasto ? {
+      icon : '💰', colorClass: 'green',
+      title: 'Acumulado',
+      value: d.costoTotal ? fmtPesos(d.costoTotal) : '—',
+      stats: [
+        { lbl: 'Acumulado total', val: d.costoTotal ? fmtPesos(d.costoTotal) : '—' },
+        { lbl: 'Último monto',    val: ultimoMonto   ? fmtPesos(ultimoMonto)  : '—' },
+      ]
+    } : {
       icon : '💰', colorClass: 'green',
       title: 'Costo',
       value: d.costoPromedio ? fmtPesos(d.costoPromedio) : '—',
@@ -1553,7 +1651,21 @@ function renderDashboard(d, elemID) {
   });
 
   // Card gráfico
-  if (d.historial && d.historial.length >= 2) {
+  if (esGasto && d.historialMensual && d.historialMensual.length >= 1) {
+    const svgChart = generarGraficoMensualSVG(d.historialMensual);
+    html += `
+      <div class="dash-card open" id="dash-card-3">
+        <div class="dash-card-header" onclick="toggleDashCard(3)">
+          <div class="dash-card-icon amber">📈</div>
+          <span class="dash-card-title">Historial mensual</span>
+          <span class="dash-card-value">${d.historialMensual.length} ${d.historialMensual.length === 1 ? 'mes' : 'meses'}</span>
+          <span class="dash-card-chevron">▼</span>
+        </div>
+        <div class="dash-card-body">
+          <div class="dash-chart-wrap">${svgChart}</div>
+        </div>
+      </div>`;
+  } else if (!esGasto && d.historial && d.historial.length >= 2) {
     const svgChart = generarGraficoSVG(d.historial, elem);
     html += `
       <div class="dash-card open" id="dash-card-3">
