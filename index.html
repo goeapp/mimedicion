@@ -33,6 +33,16 @@
     de línea de los últimos 3 registros.
   - Card "Costo" → labels explícitos "Acumulado total" y "Último monto".
   GAS: GAS_v1.3.gs
+
+  v1.4 — 2026-07-10
+  - REVERT: Dashboard por elemento (mobile y desktop) vuelve a v1.1 — sin card
+    "Acumulado" ni gráfico mensual ahí. Decisión: ese enfoque no encajaba.
+  - NUEVO — botón "Gastos" en el header (oculto en mobile, <=720px): abre vista
+    full-screen con selector "Todos los gastos" / elemento puntual, gráfico combo
+    grande (barras + acumulado) y 4 stat cards. Usa el nuevo action getGastosResumen.
+  - Fix: gráfico mensual (generarGraficoMensualSVG) ya no superpone etiquetas del
+    eje X cuando hay muchos meses — ahora limita labels según el ancho disponible.
+  GAS: GAS_v1.4.gs
 -->
 <link rel="icon" href="icon-192.png">
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;1,9..40,400&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -171,11 +181,59 @@ input, select, textarea { font-family: inherit; }
 @keyframes spin { to { transform: rotate(360deg); } }
 .hdr-avatar { width: 28px; height: 28px; border-radius: 50%; border: 2px solid rgba(255,255,255,.18); object-fit: cover; background: rgba(255,255,255,.08); flex-shrink: 0; }
 
-/* Mobile: ocultar nombre y logo texto */
+/* Mobile: ocultar nombre y logo texto, y el acceso a "Gastos" (solo Desktop) */
 @media (max-width: 720px) {
   .hdr-logo { display: none; }
   .hdr-name { max-width: 100px; }
+  #btn-gastos { display: none; }
 }
+
+/* ─────────────────────────────────────────────────
+   GASTOS — vista full-screen (solo Desktop)
+───────────────────────────────────────────────── */
+#gastos-fullscreen {
+  display: none;
+  position: fixed; inset: 0; z-index: 500;
+  background: var(--bg);
+  flex-direction: column;
+}
+#gastos-fullscreen.open { display: flex; }
+.gastos-topbar {
+  display: flex; align-items: center; gap: 16px;
+  padding: 14px 20px; background: var(--accent2); color: #fff;
+  flex-shrink: 0;
+}
+.gastos-topbar h2 { font-size: 1rem; font-weight: 600; margin: 0; flex-shrink: 0; }
+.gastos-selector {
+  background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.18);
+  color: #fff; border-radius: var(--radius-sm); padding: 6px 10px;
+  font-family: inherit; font-size: .8rem; min-width: 200px;
+}
+.gastos-selector option { color: #1e293b; }
+.gastos-close {
+  margin-left: auto; background: transparent; border: 1px solid rgba(255,255,255,.2);
+  color: #fff; border-radius: var(--radius-sm); width: 30px; height: 30px;
+  display: flex; align-items: center; justify-content: center; font-size: 1rem;
+  cursor: pointer; flex-shrink: 0;
+}
+.gastos-close:hover { background: rgba(255,255,255,.12); }
+.gastos-body {
+  flex: 1; overflow: auto; padding: 28px;
+  display: flex; flex-direction: column; gap: 20px;
+}
+.gastos-stats { display: flex; gap: 16px; flex-wrap: wrap; }
+.gastos-stat-card {
+  background: var(--surface); border-radius: var(--radius);
+  box-shadow: var(--shadow); padding: 14px 20px; min-width: 180px;
+}
+.gastos-stat-card .lbl { font-size: .68rem; color: var(--muted); text-transform: uppercase; letter-spacing: .03em; }
+.gastos-stat-card .val { font-size: 1.3rem; font-weight: 600; color: var(--text); margin-top: 2px; }
+.gastos-chart-wrap {
+  background: var(--surface); border-radius: var(--radius); box-shadow: var(--shadow);
+  padding: 20px; flex: 1; display: flex; align-items: center; justify-content: center;
+}
+.gastos-chart-wrap svg { width: 100%; height: auto; max-height: 70vh; }
+.gastos-empty { color: var(--muted); font-size: .85rem; text-align: center; padding: 40px; }
 
 /* ─────────────────────────────────────────────────
    MAIN LAYOUT
@@ -664,7 +722,7 @@ input, select, textarea { font-family: inherit; }
   <div class="login-box">
     <span class="login-icon">🔧</span>
     <div class="login-logo">MI MEDICIÓN</div>
-    <div class="login-sub">v1.2 · Control de recambios y consumos</div>
+    <div class="login-sub">v1.4 · Control de recambios y consumos</div>
     <div class="login-title">Accedé con tu cuenta Google</div>
     <div class="login-desc">Solo cuentas autorizadas pueden acceder.</div>
     <div id="g-btn-wrap"></div>
@@ -700,7 +758,7 @@ input, select, textarea { font-family: inherit; }
       <circle cx="20" cy="20" r="2.5" fill="#0ea5e9"/>
     </svg>
     <span class="hdr-logo">MI MEDICIÓN</span>
-    <span class="hdr-version">v1.2</span>
+    <span class="hdr-version">v1.4</span>
     <span class="hdr-sep"></span>
     <span class="hdr-name" id="hdr-nombre"></span>
     <button class="hdr-btn accent" id="btn-instalar-pwa" style="display:none" onclick="instalarPWA()">
@@ -708,12 +766,30 @@ input, select, textarea { font-family: inherit; }
       Instalar
     </button>
     <span id="auth-dot" title="Sesión activa"></span>
+    <button class="hdr-btn" id="btn-gastos" onclick="abrirGastosDesktop()" title="Ver gastos mensuales">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+      Gastos
+    </button>
     <button class="hdr-btn" id="btn-refresh" onclick="cargarDatos(true)" title="Actualizar">
       <svg id="refresh-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/></svg>
       Actualizar
     </button>
     <img class="hdr-avatar" id="hdr-avatar" src="" alt="avatar" onerror="this.style.display='none'">
   </header>
+
+  <!-- GASTOS — vista full-screen (solo Desktop) -->
+  <div id="gastos-fullscreen">
+    <div class="gastos-topbar">
+      <h2>📊 Gastos</h2>
+      <select class="gastos-selector" id="gastos-selector" onchange="renderGastosDesktop()">
+        <option value="__total__">Todos los gastos</option>
+      </select>
+      <button class="gastos-close" onclick="cerrarGastosDesktop()" title="Cerrar">✕</button>
+    </div>
+    <div class="gastos-body" id="gastos-body">
+      <div class="gastos-empty">Cargando...</div>
+    </div>
+  </div>
 
   <!-- MAIN -->
   <div id="main">
@@ -944,7 +1020,7 @@ input, select, textarea { font-family: inherit; }
 /* ── Configuración ───────────────────────────────────────── */
 const GAS_URL    = 'https://script.google.com/macros/s/AKfycbzRcQECvOb9-BkJTXhsW8MGhd3ltliDDJIrQ6Bt7KtTmJII8AeR6xt6Ygy7nMZgJM_E3g/exec';  // ← pegá la URL del deployment GAS
 const CLIENT_ID  = '174536806740-aus6npjphhdcn5nkgtt1ejl0tcj16ou7.apps.googleusercontent.com'; // ← OAuth Client ID de GCP
-const VERSION_UI = 'v1.2';
+const VERSION_UI = 'v1.4';
 
 /* ── Estado global ───────────────────────────────────────── */
 const estado = {
@@ -952,6 +1028,7 @@ const estado = {
   elementos   : [],      // lista completa de elementos
   registros   : {},      // { [elementoID]: [...registros] }
   dashData    : {},      // { [elementoID]: dashboardData }
+  gastosResumen: null,   // cache de getGastosResumen (Desktop, vista "Gastos")
   elemSelecto : null,    // elemento abierto en drawer
   editandoID  : null,    // ID de registro en edición
   formModo    : null,    // 'nuevo' | 'editar' | 'nuevo-desde-drawer'
@@ -1389,9 +1466,12 @@ function fmtMes(mesStr) {
 
 /* Gráfico combo: barras (gasto del mes) + línea (acumulado corriente).
    Usa dos escalas independientes (el acumulado siempre crece más que
-   el gasto mensual individual), compartiendo el mismo eje X. */
-function generarGraficoMensualSVG(historialMensual) {
-  const W = 340, H = 130, PAD = { t:14, r:44, b:28, l:44 };
+   el gasto mensual individual), compartiendo el mismo eje X.
+   opts permite escalar el tamaño (se reusa a pantalla completa en Desktop). */
+function generarGraficoMensualSVG(historialMensual, opts) {
+  opts = opts || {};
+  const W = opts.W || 340, H = opts.H || 130;
+  const PAD = opts.PAD || { t:14, r:44, b:28, l:44 };
   const gW = W - PAD.l - PAD.r;
   const gH = H - PAD.t - PAD.b;
 
@@ -1402,7 +1482,7 @@ function generarGraficoMensualSVG(historialMensual) {
   const maxTotal = Math.max(...totales) || 1;
   const maxAcum  = Math.max(...acumulados) || 1;
 
-  const anchoBarra = Math.min(28, gW / n * 0.55);
+  const anchoBarra = Math.min(opts.anchoBarraMax || 28, gW / n * 0.55);
   const px  = (i) => PAD.l + (i + 0.5) / n * gW;
   const pyB = (v)  => PAD.t + gH - (v / maxTotal) * gH;       // escala barras (izq)
   const pyL = (v)  => PAD.t + gH - (v / maxAcum)  * gH;       // escala línea (der)
@@ -1422,10 +1502,16 @@ function generarGraficoMensualSVG(historialMensual) {
     `<circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="3" fill="#d97706" stroke="#fff" stroke-width="1.2"/>`
   ).join('');
 
-  // Etiquetas eje X (mes)
-  const etiqX = historialMensual.map((m, i) =>
-    `<text x="${px(i).toFixed(1)}" y="${(H-6).toFixed(1)}" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="9" fill="#94a3b8">${fmtMes(m.mes)}</text>`
-  ).join('');
+  // Etiquetas eje X (mes) — con muchos meses se pisan, así que se muestra
+  // como máximo una cada ~34px de ancho disponible (siempre la primera y la última).
+  const anchoLabel   = opts.anchoLabelPx || 34;
+  const maxLabels     = Math.max(2, Math.floor(gW / anchoLabel));
+  const paso          = Math.max(1, Math.ceil(n / maxLabels));
+  const etiqX = historialMensual.map((m, i) => {
+    const mostrar = (i % paso === 0) || (i === n - 1);
+    if (!mostrar) return '';
+    return `<text x="${px(i).toFixed(1)}" y="${(H-6).toFixed(1)}" text-anchor="middle" font-family="DM Sans,sans-serif" font-size="9" fill="#94a3b8">${fmtMes(m.mes)}</text>`;
+  }).join('');
 
   // Etiquetas eje Y izq (barras, $ del mes) y der (acumulado)
   const etiqY = `
@@ -1590,9 +1676,6 @@ function renderDashboard(d, elemID) {
     return;
   }
 
-  const esGasto = !elem.FlagMedicion;
-  const ultimoMonto = d.ultimoRegistro && d.ultimoRegistro.valor ? d.ultimoRegistro.valor : null;
-
   const cards = [
     {
       icon : '📅', colorClass: 'blue',
@@ -1613,15 +1696,7 @@ function renderDashboard(d, elemID) {
         { lbl: 'Total de registros',       val: d.totalRegistros },
       ]
     },
-    esGasto ? {
-      icon : '💰', colorClass: 'green',
-      title: 'Acumulado',
-      value: d.costoTotal ? fmtPesos(d.costoTotal) : '—',
-      stats: [
-        { lbl: 'Acumulado total', val: d.costoTotal ? fmtPesos(d.costoTotal) : '—' },
-        { lbl: 'Último monto',    val: ultimoMonto   ? fmtPesos(ultimoMonto)  : '—' },
-      ]
-    } : {
+    {
       icon : '💰', colorClass: 'green',
       title: 'Costo',
       value: d.costoPromedio ? fmtPesos(d.costoPromedio) : '—',
@@ -1651,21 +1726,7 @@ function renderDashboard(d, elemID) {
   });
 
   // Card gráfico
-  if (esGasto && d.historialMensual && d.historialMensual.length >= 1) {
-    const svgChart = generarGraficoMensualSVG(d.historialMensual);
-    html += `
-      <div class="dash-card open" id="dash-card-3">
-        <div class="dash-card-header" onclick="toggleDashCard(3)">
-          <div class="dash-card-icon amber">📈</div>
-          <span class="dash-card-title">Historial mensual</span>
-          <span class="dash-card-value">${d.historialMensual.length} ${d.historialMensual.length === 1 ? 'mes' : 'meses'}</span>
-          <span class="dash-card-chevron">▼</span>
-        </div>
-        <div class="dash-card-body">
-          <div class="dash-chart-wrap">${svgChart}</div>
-        </div>
-      </div>`;
-  } else if (!esGasto && d.historial && d.historial.length >= 2) {
+  if (d.historial && d.historial.length >= 2) {
     const svgChart = generarGraficoSVG(d.historial, elem);
     html += `
       <div class="dash-card open" id="dash-card-3">
@@ -1687,6 +1748,92 @@ function renderDashboard(d, elemID) {
 function toggleDashCard(i) {
   const card = document.getElementById('dash-card-' + i);
   if (card) card.classList.toggle('open');
+}
+
+/* ══════════════════════════════════════════════
+   GASTOS — vista full-screen (solo Desktop)
+   Muestra el agregado mensual de todos los elementos
+   de gasto combinados, o uno puntual vía el selector.
+══════════════════════════════════════════════ */
+async function abrirGastosDesktop() {
+  document.getElementById('gastos-fullscreen').classList.add('open');
+  const body = document.getElementById('gastos-body');
+
+  if (!estado.gastosResumen) {
+    body.innerHTML = '<div class="gastos-empty">Cargando...</div>';
+    try {
+      const res = await gasPost({ action: 'getGastosResumen', email: estado.usuario.email });
+      if (!res.ok) throw new Error(res.error);
+      estado.gastosResumen = res.data;
+      poblarSelectorGastos();
+    } catch (err) {
+      body.innerHTML = '<div class="gastos-empty">⚠ Error al cargar los gastos.</div>';
+      console.error(err);
+      return;
+    }
+  }
+  renderGastosDesktop();
+}
+
+function cerrarGastosDesktop() {
+  document.getElementById('gastos-fullscreen').classList.remove('open');
+}
+
+function poblarSelectorGastos() {
+  const sel = document.getElementById('gastos-selector');
+  const d = estado.gastosResumen;
+  sel.innerHTML = '<option value="__total__">Todos los gastos</option>' +
+    (d.elementosGasto || []).map(e => `<option value="${e.ID}">${e.Nombre}</option>`).join('');
+}
+
+function renderGastosDesktop() {
+  const body = document.getElementById('gastos-body');
+  const d = estado.gastosResumen;
+  if (!d) return;
+
+  const sel    = document.getElementById('gastos-selector').value;
+  const serie  = sel === '__total__' ? d.total : (d.porElemento[sel] || []);
+  const titulo = sel === '__total__'
+    ? 'Todos los gastos'
+    : (d.elementosGasto.find(e => e.ID === sel) || {}).Nombre || sel;
+
+  if (!serie || serie.length === 0) {
+    body.innerHTML = '<div class="gastos-empty">Sin registros de gasto para mostrar.</div>';
+    return;
+  }
+
+  const acumuladoTotal = serie[serie.length - 1].acumulado;
+  const promedioMensual = Math.round(acumuladoTotal / serie.length);
+  const ultimoMes = serie[serie.length - 1];
+
+  const svg = generarGraficoMensualSVG(serie, {
+    W: 900, H: 380,
+    PAD: { t: 24, r: 80, b: 44, l: 80 },
+    anchoBarraMax: 46,
+    anchoLabelPx: 46,
+  });
+
+  body.innerHTML = `
+    <div class="gastos-stats">
+      <div class="gastos-stat-card">
+        <div class="lbl">Acumulado total — ${titulo}</div>
+        <div class="val">${fmtPesos(acumuladoTotal)}</div>
+      </div>
+      <div class="gastos-stat-card">
+        <div class="lbl">Promedio mensual</div>
+        <div class="val">${fmtPesos(promedioMensual)}</div>
+      </div>
+      <div class="gastos-stat-card">
+        <div class="lbl">Último mes (${fmtMes(ultimoMes.mes)})</div>
+        <div class="val">${fmtPesos(ultimoMes.total)}</div>
+      </div>
+      <div class="gastos-stat-card">
+        <div class="lbl">Meses con datos</div>
+        <div class="val">${serie.length}</div>
+      </div>
+    </div>
+    <div class="gastos-chart-wrap">${svg}</div>
+  `;
 }
 
 /* ══════════════════════════════════════════════
